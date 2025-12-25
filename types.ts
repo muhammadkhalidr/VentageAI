@@ -1,4 +1,10 @@
 
+export interface User {
+  email: string;
+  name: string;
+  picture: string;
+}
+
 export enum Gender {
   AUTO = 'auto',
   FEMALE = 'female',
@@ -37,11 +43,6 @@ export interface ProductInput {
   modelStrategy: ModelStrategy;
   useLogo: boolean;
   logo?: string;
-}
-
-export interface ContentIdea {
-  text: string;
-  category: 'broll' | 'ugc' | 'commercial';
 }
 
 export interface GenerationResult {
