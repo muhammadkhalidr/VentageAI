@@ -22,10 +22,12 @@ export interface ModelStrategy {
   gender: Gender;
   age: AgeGroup;
   hijab: boolean;
-  photos?: { id: string; b64: string }[];
+  customModelPhoto?: string;
 }
 
 export interface ProductInput {
+  productImage: string;
+  additionalPhotos: string[];
   productInfo: string;
   adType: string;
   ratio: string;
@@ -35,8 +37,6 @@ export interface ProductInput {
   modelStrategy: ModelStrategy;
   useLogo: boolean;
   logo?: string;
-  productImage: string;
-  additionalPhotos: { id: string; b64: string; desc: string }[];
 }
 
 export interface ContentIdea {

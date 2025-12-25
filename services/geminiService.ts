@@ -1,9 +1,8 @@
 
-import { GoogleGenAI, GenerateContentResponse, Type, Modality } from "@google/genai";
+import { GoogleGenAI, Type, Modality } from "@google/genai";
 import { ProductInput } from "../types";
 import { createWavHeader } from "../utils/imageUtils";
 
-// API key is obtained directly from process.env.API_KEY
 export const getGeminiInstance = () => {
   return new GoogleGenAI({ apiKey: process.env.API_KEY });
 };
@@ -11,94 +10,113 @@ export const getGeminiInstance = () => {
 export async function generateContentStrategy(inputs: ProductInput): Promise<any> {
   const ai = getGeminiInstance();
   const systemPrompt = `
-    Peran: Creative Marketing Director.
-    Info Produk: ${inputs.productInfo}.
-    Tipe Iklan: ${inputs.adType}.
-    Bahasa: ${inputs.lang}.
-    Tugas: Buat 12 ide visual (4 B-Roll, 4 UGC, 4 Commercial).
-    Aturan:
-    - B-Roll: Close up, tekstur, detail, sinematik.
-    - UGC: Otentik, manusia menggunakan produk, candid.
-    - Commercial: Pencahayaan studio, bersih, staging profesional.
+    Role: Creative Marketing Director.
+    Product Info: ${inputs.productInfo}.
+    Ads Type: ${inputs.adType}.
+    Language: ${inputs.lang}.
+    
+    Task: Create visual content ideas that highlight the product's unique features.
+    Output: Return a JSON with:
+    - "broll": 2 cinematic macro ideas focusing strictly on textures and details.
+    - "ugc": 4 authentic lifestyle ideas showing the product in real-world use.
+    - "commercial": 2 professional studio product shot ideas.
+    
+    Each item must have a "text" field describing the visual scene clearly without suggesting text or graphic overlays.
+    CRITICAL: JSON ONLY. No other text.
   `;
 
-  const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: [
-      {
-        parts: [
-          { text: systemPrompt },
-          { inlineData: { mimeType: 'image/png', data: inputs.productImage.split(',')[1] } }
-        ]
-      }
-    ],
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          broll: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { text: { type: Type.STRING } } } },
-          ugc: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { text: { type: Type.STRING } } } },
-          commercial: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { text: { type: Type.STRING } } } }
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: [
+        {
+          parts: [
+            { text: systemPrompt },
+            { inlineData: { mimeType: 'image/png', data: inputs.productImage.split(',')[1] } }
+          ]
+        }
+      ],
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            broll: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { text: { type: Type.STRING } } } },
+            ugc: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { text: { type: Type.STRING } } } },
+            commercial: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { text: { type: Type.STRING } } } }
+          },
+          required: ["broll", "ugc", "commercial"]
         }
       }
-    }
-  });
+    });
 
-  return JSON.parse(response.text || "{}");
+    const text = response.text;
+    if (!text) throw new Error("Kosong");
+    const cleanJson = text.replace(/```json/g, "").replace(/```/g, "").trim();
+    return JSON.parse(cleanJson);
+  } catch (error: any) {
+    console.error("Strategy Error:", error);
+    throw new Error(`AI sedang sibuk atau gambar produk kurang jelas. Silakan coba lagi.`);
+  }
 }
 
 export async function generateProductImage(prompt: string, images: string[], ratio: string): Promise<string> {
   const ai = getGeminiInstance();
   
-  const parts = images.map(img => ({
+  // Menyusun input dengan instruksi analisis gambar yang mendalam
+  const parts = images.filter(img => img && img.includes(',')).map(img => ({
     inlineData: { mimeType: 'image/png', data: img.split(',')[1] }
   }));
   
-  const response = await ai.models.generateContent({
-    model: "gemini-2.5-flash-image",
-    contents: {
-      parts: [
-        { text: prompt },
-        ...parts
-      ]
-    },
-    config: {
-      imageConfig: {
-        aspectRatio: ratio as any || "1:1"
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash-image",
+      contents: {
+        parts: [
+          { 
+            text: `
+              INSTRUCTION: Carefully analyze the provided product images. 
+              Replicate the product's EXACT shape, color, branding, and details in the new scene described below. 
+              DO NOT include any text, logos, or UI elements that are not part of the physical product. 
+              The output must be a clean, professional photograph.
+              
+              SCENE DESCRIPTION: ${prompt}
+            ` 
+          },
+          ...parts
+        ]
+      },
+      config: {
+        imageConfig: {
+          aspectRatio: (ratio as any) || "1:1"
+        }
+      }
+    });
+
+    const candidates = response.candidates;
+    if (!candidates?.[0]?.content?.parts) throw new Error("Safety filter aktif.");
+
+    for (const part of candidates[0].content.parts) {
+      if (part.inlineData) {
+        return `data:image/png;base64,${part.inlineData.data}`;
       }
     }
-  });
-
-  let imageUrl = "";
-  // Search for the image part in the response as per guidelines
-  for (const part of response.candidates?.[0]?.content?.parts || []) {
-    if (part.inlineData) {
-      imageUrl = `data:image/png;base64,${part.inlineData.data}`;
-      break;
-    }
+    
+    throw new Error("Gagal merender data gambar.");
+  } catch (error: any) {
+    console.error("Image Error:", error);
+    throw error;
   }
-  
-  if (!imageUrl) throw new Error("Gagal generate gambar");
-  return imageUrl;
 }
 
 export async function generateScript(prompt: string, productInfo: string, lang: string): Promise<string> {
   const ai = getGeminiInstance();
-  const instruction = `
-    Buatlah naskah Voice Over (VO) berdurasi 15-30 detik dalam bahasa ${lang}.
-    Gunakan format tabel Markdown: | WAKTU | NARATOR | MUSIK |.
-    Awali narasi dengan tag emosi seperti [Ceria] atau [Tegas].
-    Konteks Produk: ${productInfo}.
-    Visual: ${prompt}.
-  `;
-
+  const instruction = `Buat naskah VO pendek (maks 30 kata) untuk iklan produk ${productInfo} berdasarkan visual: ${prompt}. Gunakan bahasa ${lang} yang persuasif tapi natural. Tuliskan naskahnya saja tanpa embel-embel lain.`;
   const response = await ai.models.generateContent({
     model: "gemini-3-flash-preview",
     contents: instruction
   });
-
-  return response.text || "Gagal membuat naskah.";
+  return response.text || "Naskah tidak tersedia.";
 }
 
 export async function generateAudio(text: string, voiceName: string): Promise<string> {
@@ -119,25 +137,12 @@ export async function generateAudio(text: string, voiceName: string): Promise<st
   });
 
   const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-  if (!base64Audio) throw new Error("No audio data returned");
+  if (!base64Audio) throw new Error("Audio data error");
 
-  // Helper logic to convert base64 PCM to browser-playable WAV
   const binaryString = atob(base64Audio);
-  const len = binaryString.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
-  }
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
 
   const wavBytes = createWavHeader(bytes, 24000); 
   return URL.createObjectURL(new Blob([wavBytes], { type: 'audio/wav' }));
-}
-
-export async function rewritePrompt(original: string, style: string): Promise<string> {
-  const ai = getGeminiInstance();
-  const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: `Tulis ulang prompt gambar ini agar sesuai dengan gaya visual "${style}". Pertahankan subjek inti. Asli: "${original}". Output: Hanya teks prompt baru.`
-  });
-  return response.text || original;
 }
