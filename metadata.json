@@ -1,0 +1,7 @@
+{
+  "name": "Vantage AI Studio",
+  "description": "Professional AI Marketing Suite for generating high-converting affiliate content with product-to-model integration.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
