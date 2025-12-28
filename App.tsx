@@ -2,13 +2,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import SidebarInput from './components/SidebarInput';
 import ContentCard from './components/ContentCard';
-import { GenerationResult, ProductInput, User } from './types';
+import { GenerationResult, ProductInput, User, VideoSpecs } from './types';
 import { generateContentStrategy, generateProductImage, generateAudio } from './services/geminiService';
 import { buildFinalImagePrompt } from './utils/promptGenerator';
 import { composeLogo } from './utils/imageUtils';
-import { LucideSparkles, LucideSmile, LucideAlertCircle, LucideX, LucideSettings2, LucideLock, LucideLogOut, LucideUserCheck } from 'lucide-react';
+import { LucideSparkles, LucideAlertCircle, LucideX, LucideSettings2, LucideLock, LucideLogOut } from 'lucide-react';
 
-// URL Portal Login Anda
 const MY_AUTH_PORTAL_URL = "https://auth.fromzerocreative.com/";
 
 const App: React.FC = () => {
@@ -16,42 +15,29 @@ const App: React.FC = () => {
   const [isAuthChecking, setIsAuthChecking] = useState(true);
   const [authError, setAuthError] = useState<string | null>(null);
 
-  const [activeTab, setActiveTab] = useState<'broll' | 'ugc' | 'commercial'>('broll');
-  const [isLoading, setIsLoading] = useState(false);
-  const [loadingStatus, setLoadingStatus] = useState('');
+  const [isLoadingStrategy, setIsLoadingStrategy] = useState(false);
   const [results, setResults] = useState<GenerationResult[]>([]);
   const [currentInputs, setCurrentInputs] = useState<ProductInput | null>(null);
-  const [errorLog, setErrorLog] = useState<string | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth >= 1024);
   
-  // Ref untuk menyimpan instance iframe agar bisa diakses
   const authFrameRef = useRef<HTMLIFrameElement>(null);
 
   useEffect(() => {
     const savedUser = localStorage.getItem('vantage_user');
-    if (savedUser) {
-      setUser(JSON.parse(savedUser));
-    }
+    if (savedUser) setUser(JSON.parse(savedUser));
     setIsAuthChecking(false);
 
     const handleMessage = (event: MessageEvent) => {
       const portalOrigin = new URL(MY_AUTH_PORTAL_URL).origin;
       if (event.origin !== portalOrigin) return;
-
       const data = event.data;
       
       if (data.type === 'AUTH_SUCCESS') {
-        // Cek apakah user baru saja klik logout (mencegah login loop)
         if (localStorage.getItem('vantage_logout_pending') === 'true') {
-          console.log("Mendeteksi pesan sukses setelah logout, mengirim perintah SignOut ke Iframe...");
-          // Kirim balik pesan logout ke iframe
-          if (event.source) {
-            (event.source as Window).postMessage({ type: 'LOGOUT_REQUEST' }, event.origin);
-          }
+          if (event.source) (event.source as Window).postMessage({ type: 'LOGOUT_REQUEST' }, event.origin);
           localStorage.removeItem('vantage_logout_pending');
           return;
         }
-
         const userData: User = {
           email: data.email,
           name: data.displayName || data.email.split('@')[0],
@@ -59,67 +45,83 @@ const App: React.FC = () => {
         };
         setUser(userData);
         localStorage.setItem('vantage_user', JSON.stringify(userData));
-        setAuthError(null);
       } else if (data.type === 'AUTH_ERROR') {
-        setAuthError(data.message || "Gagal melakukan autentikasi.");
-        localStorage.removeItem('vantage_logout_pending');
+        setAuthError(data.message);
       }
     };
-
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
   }, []);
 
   const logout = () => {
-    // 1. Set flag agar pesan AUTH_SUCCESS berikutnya dibatalkan
     localStorage.setItem('vantage_logout_pending', 'true');
-    
-    // 2. Bersihkan state lokal
     localStorage.removeItem('vantage_user');
     setUser(null);
-    setAuthError(null);
-    
-    // TIDAK menggunakan window.location.href untuk menghindari error DNS/Hosting
-    console.log("Logout berhasil di sisi klien. Menunggu sinkronisasi Iframe...");
   };
+
+  const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
   const handleGenerate = async (data: ProductInput) => {
     if (window.innerWidth < 1024) setIsSidebarOpen(false);
-    setIsLoading(true);
+    setIsLoadingStrategy(true);
     setResults([]);
     setCurrentInputs(data);
-    setLoadingStatus('Menganalisis Strategi...');
 
     try {
-      const strategy = await generateContentStrategy(data);
-      const categories: ('broll' | 'ugc' | 'commercial')[] = ['broll', 'ugc', 'commercial'];
-      
-      for (const cat of categories) {
-        const ideas = (strategy[cat] || []).slice(0, cat === 'ugc' ? 4 : 2);
-        
-        for (let i = 0; i < ideas.length; i++) {
-          setLoadingStatus(`Merender ${cat} (${i + 1}/${ideas.length})...`);
-          try {
-            const finalPrompt = buildFinalImagePrompt(ideas[i].text, cat, data);
-            const imageUrl = await generateProductImage(finalPrompt, [data.productImage, ...data.additionalPhotos], data.ratio);
-            let finalImage = imageUrl;
-            if (data.useLogo && data.logo) finalImage = await composeLogo(imageUrl, data.logo);
+      const concepts = await generateContentStrategy(data);
+      const placeholders: GenerationResult[] = concepts.map((concept, idx) => ({
+        id: `ugc-${Date.now()}-${idx}`,
+        category: 'ugc',
+        prompt: concept,
+        status: 'loading'
+      }));
+      setResults(placeholders);
+      setIsLoadingStrategy(false);
 
-            setResults(prev => [...prev, {
-              id: `${cat}-${Date.now()}-${i}`,
-              category: cat,
-              prompt: ideas[i].text,
-              imageUrl: finalImage
-            }]);
-          } catch (e) {
-            console.error(e);
-          }
+      for (let i = 0; i < concepts.length; i++) {
+        const concept = concepts[i];
+        const resultId = placeholders[i].id;
+        
+        if (i > 0 && i % 2 === 0) {
+          await delay(1500);
         }
+
+        renderSingleImage(resultId, concept, data);
       }
+
     } catch (e: any) {
-      setErrorLog(e.message);
-    } finally {
-      setIsLoading(false);
+      alert("Gagal menganalisis produk.");
+      setIsLoadingStrategy(false);
+    }
+  };
+
+  const renderSingleImage = async (id: string, prompt: string, inputs: ProductInput) => {
+    setResults(prev => prev.map(res => res.id === id ? { ...res, status: 'loading' } : res));
+    try {
+      const finalPrompt = buildFinalImagePrompt(prompt, 'ugc', inputs);
+      const referenceImages = [inputs.productImage, ...inputs.additionalPhotos];
+      if (inputs.modelStrategy.type === 'upload' && inputs.modelStrategy.customModelPhoto) {
+        referenceImages.push(inputs.modelStrategy.customModelPhoto);
+      }
+
+      const imageUrl = await generateProductImage(finalPrompt, referenceImages, inputs.ratio);
+      let finalImage = imageUrl;
+      if (inputs.useLogo && inputs.logo) finalImage = await composeLogo(imageUrl, inputs.logo);
+
+      setResults(prev => prev.map(res => 
+        res.id === id ? { ...res, imageUrl: finalImage, status: 'success' } : res
+      ));
+    } catch (e: any) {
+      setResults(prev => prev.map(res => 
+        res.id === id ? { ...res, status: 'error', errorMsg: "Kuota penuh atau filter aktif." } : res
+      ));
+    }
+  };
+
+  const handleRegenerateImage = (id: string) => {
+    const result = results.find(r => r.id === id);
+    if (result && currentInputs) {
+      renderSingleImage(id, result.prompt, currentInputs);
     }
   };
 
@@ -127,49 +129,27 @@ const App: React.FC = () => {
     try {
       const audioUrl = await generateAudio(script, voice);
       setResults(prev => prev.map(res => res.id === id ? { ...res, audioUrl } : res));
-    } catch (e) {
-      console.error(e);
-    }
+    } catch (e) {}
   };
 
   const handleUpdateScriptForContent = (id: string, script: string) => {
     setResults(prev => prev.map(res => res.id === id ? { ...res, script } : res));
   };
 
+  const handleUpdateVideoSpecsForContent = (id: string, videoSpecs: VideoSpecs) => {
+    setResults(prev => prev.map(res => res.id === id ? { ...res, videoSpecs } : res));
+  };
+
   if (!user) {
     return (
       <div className="h-screen w-full bg-slate-50 flex items-center justify-center p-6">
-        <div className="max-w-md w-full bg-white rounded-[2.5rem] shadow-2xl shadow-indigo-100 p-10 text-center animate-in fade-in zoom-in duration-500">
+        <div className="max-w-md w-full bg-white rounded-[2.5rem] shadow-2xl p-10 text-center animate-in fade-in zoom-in">
           <div className="w-20 h-20 bg-indigo-600 rounded-3xl flex items-center justify-center text-white shadow-xl mx-auto mb-8">
             <LucideLock size={40} />
           </div>
           <h1 className="text-2xl font-black text-slate-900 mb-2 tracking-tighter">Vantage AI Studio</h1>
-          <p className="text-slate-400 font-medium text-sm mb-10 leading-relaxed">Silakan login untuk mengakses editor.</p>
-          
-          {authError && (
-            <div className="mb-8 p-4 bg-red-50 rounded-2xl border border-red-100 flex items-center gap-3 text-left">
-              <LucideAlertCircle size={18} className="text-red-500 shrink-0" />
-              <p className="text-[11px] font-bold text-red-600 leading-tight">{authError}</p>
-            </div>
-          )}
-
-          <div className="w-full flex justify-center relative min-h-[70px] bg-slate-50 rounded-2xl p-2 border border-slate-100">
-             {isAuthChecking ? (
-               <div className="flex items-center gap-3 py-4">
-                 <div className="w-4 h-4 border-2 border-indigo-200 border-t-indigo-600 rounded-full animate-spin" />
-                 <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Memeriksa...</span>
-               </div>
-             ) : (
-               <iframe 
-                  ref={authFrameRef}
-                  src={MY_AUTH_PORTAL_URL} 
-                  id="authFrame"
-                  title="Google Login"
-                  style={{ width: '100%', height: '60px', border: 'none', overflow: 'hidden' }}
-                  scrolling="no"
-               />
-             )}
-          </div>
+          <p className="text-slate-400 font-medium text-sm mb-10 leading-relaxed">Login pro untuk mulai berkarya.</p>
+          <iframe ref={authFrameRef} src={MY_AUTH_PORTAL_URL} id="authFrame" style={{ width: '100%', height: '60px', border: 'none' }} scrolling="no" />
         </div>
       </div>
     );
@@ -178,7 +158,7 @@ const App: React.FC = () => {
   return (
     <div className="flex h-screen overflow-hidden bg-white text-slate-900">
       <div className={`fixed lg:relative z-[50] h-full transition-all duration-300 shrink-0 ${isSidebarOpen ? 'translate-x-0 w-[85vw] sm:w-[400px] lg:w-[420px]' : '-translate-x-full lg:translate-x-0 lg:w-0 overflow-hidden'}`}>
-        <SidebarInput onGenerate={handleGenerate} isLoading={isLoading} onClose={() => setIsSidebarOpen(false)} />
+        <SidebarInput onGenerate={handleGenerate} isLoading={isLoadingStrategy} onClose={() => setIsSidebarOpen(false)} />
       </div>
 
       <main className="flex-1 flex flex-col relative overflow-hidden bg-slate-50">
@@ -187,47 +167,42 @@ const App: React.FC = () => {
             {isSidebarOpen && window.innerWidth < 1024 ? <LucideX size={20} /> : <LucideSettings2 size={20} />}
           </button>
 
-          <div className="flex-1 flex justify-center lg:justify-start">
-            <div className="flex bg-slate-100 p-1 rounded-full gap-0.5 overflow-x-auto no-scrollbar">
-              {['broll', 'ugc', 'commercial'].map((tab) => (
-                <button key={tab} onClick={() => setActiveTab(tab as any)} className={`px-6 py-2 rounded-full text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === tab ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-400'}`}>
-                  {tab}
-                </button>
-              ))}
-            </div>
+          <div className="flex-1">
+             <h2 className="text-[10px] font-black text-slate-900 uppercase tracking-[0.2em]">6 Interior UGC Concepts</h2>
           </div>
 
           <div className="ml-auto flex items-center gap-3">
-             <div className="hidden sm:flex flex-col items-end mr-2">
-                <p className="text-[10px] font-black text-slate-900 leading-none">{user.name}</p>
-                <p className="text-[8px] font-bold text-slate-400 leading-none mt-1">{user.email}</p>
-             </div>
              <img src={user.picture} className="w-8 h-8 rounded-full border-2 border-white shadow-sm" alt="profile" />
-             <button onClick={logout} title="Logout" className="p-2 text-slate-300 hover:text-red-500 transition-colors">
-                <LucideLogOut size={18} />
-             </button>
+             <button onClick={logout} className="p-2 text-slate-300 hover:text-red-500 transition-colors"><LucideLogOut size={18} /></button>
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto p-3 lg:p-10 custom-scrollbar relative">
-          <div className="grid grid-cols-2 xl:grid-cols-3 gap-3 lg:gap-8 max-w-[1400px] mx-auto pb-24">
-            {results.filter(res => res.category === activeTab).map((res) => (
+        <div className="flex-1 overflow-y-auto p-4 lg:p-10 custom-scrollbar relative">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 lg:gap-8 max-w-[1400px] mx-auto pb-24">
+            {results.map((res) => (
               <ContentCard 
                 key={res.id} 
                 data={res} 
                 inputs={currentInputs!} 
                 onGenerateAudio={(script, voice) => handleGenerateAudioForContent(res.id, script, voice)} 
                 onUpdateScript={(script) => handleUpdateScriptForContent(res.id, script)} 
+                onUpdateVideoSpecs={(specs) => handleUpdateVideoSpecsForContent(res.id, specs)}
+                onRegenerateImage={() => handleRegenerateImage(res.id)}
               />
             ))}
+            {results.length === 0 && !isLoadingStrategy && (
+               <div className="col-span-full h-[60vh] flex flex-col items-center justify-center text-slate-300">
+                  <LucideSparkles size={64} className="mb-4 opacity-20" />
+                  <p className="text-xs font-black uppercase tracking-widest">Siap merender 6 konten affiliate?</p>
+               </div>
+            )}
           </div>
         </div>
 
-        {isLoading && (
-          <div className="absolute inset-0 bg-white/95 backdrop-blur-xl z-[100] flex flex-col items-center justify-center p-6 text-center animate-in fade-in">
-            <div className="w-16 h-16 border-[6px] border-indigo-100 border-t-indigo-600 rounded-full animate-spin mb-8" />
-            <h3 className="text-xl font-black text-slate-900 mb-2 uppercase tracking-tighter">Memproses Konten Pro</h3>
-            <div className="px-5 py-2 bg-indigo-50 rounded-full text-[9px] font-black text-indigo-600 uppercase tracking-widest">{loadingStatus}</div>
+        {isLoadingStrategy && (
+          <div className="absolute inset-0 bg-white/60 backdrop-blur-sm z-[100] flex flex-col items-center justify-center p-6 text-center">
+            <div className="w-12 h-12 border-4 border-indigo-100 border-t-indigo-600 rounded-full animate-spin mb-4" />
+            <p className="text-[10px] font-black text-slate-900 uppercase tracking-widest">Merancang 6 Konsep Interior...</p>
           </div>
         )}
       </main>

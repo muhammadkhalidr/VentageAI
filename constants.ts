@@ -7,12 +7,12 @@ export const ASPECT_RATIOS: Record<string, { width: number; height: number; clas
 };
 
 export const VOICES = [
-  { id: 'Zephyr', name: 'Zephyr', tone: 'Ceria', gender: 'LK' },
-  { id: 'Puck', name: 'Puck', tone: 'Semangat', gender: 'LK' },
-  { id: 'Charon', name: 'Charon', tone: 'Informatif', gender: 'LK' },
-  { id: 'Kore', name: 'Kore', tone: 'Tegas', gender: 'PR' },
-  { id: 'Leda', name: 'Leda', tone: 'Muda', gender: 'PR' },
-  { id: 'Aoede', name: 'Aoede', tone: 'Santai', gender: 'PR' },
-  { id: 'Callirrhoe', name: 'Callirrhoe', tone: 'Tenang', gender: 'PR' },
-  { id: 'Autonoe', name: 'Autonoe', tone: 'Ceria', gender: 'PR' },
+  { id: 'Zephyr', name: 'Zephyr', tone: 'Ceria', gender: 'male', age: ['Anak', 'Remaja'] },
+  { id: 'Puck', name: 'Puck', tone: 'Semangat', gender: 'male', age: ['Remaja', 'Dewasa'] },
+  { id: 'Charon', name: 'Charon', tone: 'Informatif', gender: 'male', age: ['Dewasa', 'Orangtua'] },
+  { id: 'Kore', name: 'Kore', tone: 'Tegas', gender: 'female', age: ['Dewasa'] },
+  { id: 'Leda', name: 'Leda', tone: 'Muda', gender: 'female', age: ['Anak', 'Remaja'] },
+  { id: 'Aoede', name: 'Aoede', tone: 'Santai', gender: 'female', age: ['Dewasa'] },
+  { id: 'Callirrhoe', name: 'Callirrhoe', tone: 'Tenang', gender: 'female', age: ['Dewasa', 'Orangtua'] },
+  { id: 'Autonoe', name: 'Autonoe', tone: 'Ceria', gender: 'female', age: ['Anak', 'Remaja'] },
 ];

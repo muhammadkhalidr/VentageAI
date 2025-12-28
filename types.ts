@@ -31,6 +31,11 @@ export interface ModelStrategy {
   customModelPhoto?: string;
 }
 
+export interface VideoSpecs {
+  video_prompt: string;
+  voiceover: string;
+}
+
 export interface ProductInput {
   productImage: string;
   additionalPhotos: string[];
@@ -49,7 +54,10 @@ export interface GenerationResult {
   id: string;
   category: string;
   prompt: string;
-  imageUrl: string;
+  imageUrl?: string;
   script?: string;
   audioUrl?: string;
+  videoSpecs?: VideoSpecs;
+  status: 'loading' | 'success' | 'error';
+  errorMsg?: string;
 }

@@ -1,28 +1,30 @@
 
 import { GoogleGenAI, Type, Modality } from "@google/genai";
-import { ProductInput } from "../types";
+import { ProductInput, VideoSpecs, ModelStrategy, Gender } from "../types";
 import { createWavHeader } from "../utils/imageUtils";
 
 export const getGeminiInstance = () => {
   return new GoogleGenAI({ apiKey: process.env.API_KEY });
 };
 
-export async function generateContentStrategy(inputs: ProductInput): Promise<any> {
+export async function generateContentStrategy(inputs: ProductInput): Promise<string[]> {
   const ai = getGeminiInstance();
   const systemPrompt = `
-    Role: Creative Marketing Director.
-    Product Info: ${inputs.productInfo}.
-    Ads Type: ${inputs.adType}.
-    Language: ${inputs.lang}.
+    Role: Professional Affiliate UGC Video Strategist.
+    Product: ${inputs.productInfo}.
     
-    Task: Create visual content ideas that highlight the product's unique features.
-    Output: Return a JSON with:
-    - "broll": 2 cinematic macro ideas focusing strictly on textures and details.
-    - "ugc": 4 authentic lifestyle ideas showing the product in real-world use.
-    - "commercial": 2 professional studio product shot ideas.
+    Task: Generate exactly 6 high-converting UGC visual concepts focused ONLY on Home Interior (Living Room or Bedroom).
     
-    Each item must have a "text" field describing the visual scene clearly without suggesting text or graphic overlays.
-    CRITICAL: JSON ONLY. No other text.
+    The 6 concepts must vary within these settings:
+    1. Bedroom: Morning sunlight, model sitting on a white bed sheet holding the product.
+    2. Living Room: Cozy vibes, model on a modern sofa showcasing the product.
+    3. Vanity Mirror: Close-up of model applying/showing product in front of a bedroom mirror.
+    4. Mirror Selfie: Aesthetic full-body mirror selfie in a stylish bedroom or living room, showing the product and the outfit.
+    5. Window Side: Natural soft lighting near curtains, model looking at the product.
+    6. Aesthetic Corner: Living room corner with plants and minimal decor, model standing naturally.
+    
+    Output: JSON array of 6 strings.
+    Format: ["concept 1", "concept 2", ...]
   `;
 
   try {
@@ -39,32 +41,24 @@ export async function generateContentStrategy(inputs: ProductInput): Promise<any
       config: {
         responseMimeType: "application/json",
         responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            broll: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { text: { type: Type.STRING } } } },
-            ugc: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { text: { type: Type.STRING } } } },
-            commercial: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { text: { type: Type.STRING } } } }
-          },
-          required: ["broll", "ugc", "commercial"]
+          type: Type.ARRAY,
+          items: { type: Type.STRING }
         }
       }
     });
 
     const text = response.text;
-    if (!text) throw new Error("Kosong");
-    const cleanJson = text.replace(/```json/g, "").replace(/```/g, "").trim();
-    return JSON.parse(cleanJson);
+    if (!text) throw new Error("Empty response");
+    return JSON.parse(text.replace(/```json/g, "").replace(/```/g, "").trim());
   } catch (error: any) {
     console.error("Strategy Error:", error);
-    throw new Error(`AI sedang sibuk atau gambar produk kurang jelas. Silakan coba lagi.`);
+    throw new Error(`Gagal menganalisis produk.`);
   }
 }
 
 export async function generateProductImage(prompt: string, images: string[], ratio: string): Promise<string> {
   const ai = getGeminiInstance();
-  
-  // Menyusun input dengan instruksi analisis gambar yang mendalam
-  const parts = images.filter(img => img && img.includes(',')).map(img => ({
+  const imageParts = images.filter(img => img && img.includes(',')).map((img) => ({
     inlineData: { mimeType: 'image/png', data: img.split(',')[1] }
   }));
   
@@ -75,43 +69,74 @@ export async function generateProductImage(prompt: string, images: string[], rat
         parts: [
           { 
             text: `
-              INSTRUCTION: Carefully analyze the provided product images. 
-              Replicate the product's EXACT shape, color, branding, and details in the new scene described below. 
-              DO NOT include any text, logos, or UI elements that are not part of the physical product. 
-              The output must be a clean, professional photograph.
-              
-              SCENE DESCRIPTION: ${prompt}
+              STRICT UGC STYLE: 
+              SCENE: ${prompt}
+              INSTRUCTIONS: 
+              - Realistic, aesthetic Indonesian-style modern home.
+              - Product must be HELD or PLACED naturally. 
+              - KEEP PRODUCT IDENTICAL. 
+              - Natural home lighting. 
+              - Sharp focus on product.
             ` 
           },
-          ...parts
+          ...imageParts
         ]
       },
       config: {
-        imageConfig: {
-          aspectRatio: (ratio as any) || "1:1"
-        }
+        imageConfig: { aspectRatio: (ratio as any) || "1:1" }
       }
     });
 
-    const candidates = response.candidates;
-    if (!candidates?.[0]?.content?.parts) throw new Error("Safety filter aktif.");
-
-    for (const part of candidates[0].content.parts) {
-      if (part.inlineData) {
-        return `data:image/png;base64,${part.inlineData.data}`;
-      }
+    for (const part of response.candidates?.[0]?.content?.parts || []) {
+      if (part.inlineData) return `data:image/png;base64,${part.inlineData.data}`;
     }
-    
-    throw new Error("Gagal merender data gambar.");
+    throw new Error("Render failed");
   } catch (error: any) {
-    console.error("Image Error:", error);
     throw error;
   }
 }
 
-export async function generateScript(prompt: string, productInfo: string, lang: string): Promise<string> {
+export async function generateVideoSpecs(prompt: string, productInfo: string, strategy: ModelStrategy): Promise<VideoSpecs> {
   const ai = getGeminiInstance();
-  const instruction = `Buat naskah VO pendek (maks 30 kata) untuk iklan produk ${productInfo} berdasarkan visual: ${prompt}. Gunakan bahasa ${lang} yang persuasif tapi natural. Tuliskan naskahnya saja tanpa embel-embel lain.`;
+  
+  const genderText = strategy.gender === Gender.MALE ? "Pria" : "Wanita";
+  const ageText = strategy.age;
+  const persona = `${genderText} dengan kategori usia ${ageText}`;
+
+  const instruction = `
+    Berdasarkan konsep visual: "${prompt}" untuk produk "${productInfo}".
+    Buatlah spesifikasi untuk pembuatan video pendek (TikTok/Reels).
+    
+    PENTING: Talent yang berbicara adalah seorang ${persona}.
+    Naskah voiceover harus menggunakan gaya bicara, kosakata, dan nada yang sesuai dengan persona tersebut (contoh: jika anak-anak gunakan gaya ceria, jika dewasa gunakan gaya profesional/persuasif).
+    
+    Output harus dalam JSON dengan field:
+    1. video_prompt: Instruksi visual gerakan kamera dan model (Bahasa Indonesia).
+    2. voiceover: Teks naskah bicara yang persuasif, serta mengikuti gerakan mulut, natural, dan sesuai karakter ${persona} (Bahasa Indonesia).
+  `;
+
+  const response = await ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents: instruction,
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          video_prompt: { type: Type.STRING },
+          voiceover: { type: Type.STRING }
+        },
+        required: ["video_prompt", "voiceover"]
+      }
+    }
+  });
+
+  return JSON.parse(response.text || "{}");
+}
+
+export async function generateScript(prompt: string, productInfo: string): Promise<string> {
+  const ai = getGeminiInstance();
+  const instruction = `Buat caption promosi singkat (Bahasa Indonesia) untuk produk ${productInfo} dengan konsep ${prompt}. Sertakan hook menarik dan hashtag relevan. Maks 20 kata.`;
   const response = await ai.models.generateContent({
     model: "gemini-3-flash-preview",
     contents: instruction
@@ -137,12 +162,9 @@ export async function generateAudio(text: string, voiceName: string): Promise<st
   });
 
   const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-  if (!base64Audio) throw new Error("Audio data error");
-
+  if (!base64Audio) throw new Error("Audio error");
   const binaryString = atob(base64Audio);
   const bytes = new Uint8Array(binaryString.length);
   for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
-
-  const wavBytes = createWavHeader(bytes, 24000); 
-  return URL.createObjectURL(new Blob([wavBytes], { type: 'audio/wav' }));
+  return URL.createObjectURL(new Blob([createWavHeader(bytes, 24000)], { type: 'audio/wav' }));
 }
